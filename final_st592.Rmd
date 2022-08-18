@@ -1,0 +1,246 @@
+---
+title: "Final ST592"
+author: "Zoe Aiello"
+date: "3/13/2022"
+output: pdf_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# BiocManager is required to install ggtree, Biostrings, and msa packages
+#install.packages("treedater")
+library(treedater)
+library(seqinr)
+library(kmer)
+library(dendextend)
+library(mclust)
+library(cluster)
+library(phylogram)
+library(ape)
+library(Biostrings)
+library(msa)
+library(stringr)
+library(ggplot2)
+library(ggtree)
+library(phyclust)
+```
+
+```{r}
+# load data
+seq_data <- seqinr::read.fasta(file = 'comb_seq.fasta')
+```
+
+```{r}
+#### Data Wrangling ####
+
+# get sequence, returns individual characters in a list
+seq_list <- seqinr::getSequence(seq_data)
+
+# make a list with the same length as the sequence list
+seq_str_list <- rep(NA, length(seq_list))
+
+# combine the characters so that the whole sequence is one string
+for(i in 1:length(seq_list)) {
+  str_seq <- gsub(", ", "", toString(seq_list[[i]]))
+  seq_str_list[i] <- str_seq
+}
+
+# get the header of the fasta file which includes the species name
+seq_headers <- names(seq_data)
+
+# create a dataframe with the species and their sequences
+seq_df <- data.frame(Species = seq_headers, Sequence = seq_str_list)
+```
+
+```{r}
+# remove the outgroup from the dataset being used to create the dendrogram 
+# because dendrograms cannot be rooted
+den_matrix <- seq_data[names(seq_data) != "Orycteropus_afer"]
+
+# Additionally, remove it from the dataframe
+seq_den <- seq_df[seq_df$Species != "Orycteropus_afer", ]
+
+# Add a column with the true clustering results
+seq_den$clade <- "Armadillo" 
+seq_den$clade[seq_den$Species %in% c("Acratocnus_ye",
+                                   "Megatherium_americanum",
+                                   "Bradypus_pygmaeus",
+                                   "Bradypus_torquatus",
+                                   "Bradypus_variegatus", 
+                                   "Choloepus_hoffmanni", 
+                                   "Mylodon_darwinii")] <- "Sloth"
+
+seq_den$clade[seq_den$Species %in% c("Tamandua_tetradactyla", 
+                                 "Tamandua_mexicana",
+                                 "Myrmecophaga_tridactyla", 
+                                 "Cyclopes_didactylus")] <- "Anteater"
+```
+
+```{r}
+
+# Get distance matrix using kmers. k = 1066, about 2/3 of the sequence lengths which average at about 1600
+dist_mat <- kdistance(den_matrix, k = 5)
+
+# cluster using average 
+xen_hclus <- hclust(dist_mat, "average")
+
+# create the dendrogram
+den_xen <- as.dendrogram(xen_hclus)
+den_xen %>% set("labels_cex", 0.5) %>% set("labels_col", value = c(1,2,3), k=3) %>% 
+   plot(main = "Hierarchical Clustering of Xenarthra")
+
+```
+
+```{r}
+# cut the tree with 3 clusters
+hcut_xen <- cutree(xen_hclus, k = 3)
+
+hcut_xen
+
+# Calculate the clustering error using the true clustering results
+classError(hcut_xen, seq_den$clade)
+```
+17.39% of cases were misclassified. (4/23 cases)
+
+
+```{r}
+# https://bioconductor.org/packages/devel/bioc/vignettes/msa/inst/doc/msa.pdf
+
+# reload data using bioconductor
+mySequences <- readDNAStringSet("comb_seq.fasta")
+
+# align the sequences using ClustalW multiple alignment
+xen_aligned <- msa(mySequences)
+```
+
+```{r}
+# word function is in stringr package
+
+# convert the alignment object into a list object
+xen_aligned_2 <- msaConvert(xen_aligned, type = "seqinr::alignment")
+
+# change the names of the sequences to only include the genus and species name
+for(i in 1:length(xen_aligned_2$nam)) {
+  xen_aligned_2$nam[i] <- word(xen_aligned_2$nam[i], 1)
+}
+
+# calculate distance matrix
+xen_dist <- dist.alignment(xen_aligned_2, "identity")
+```
+
+
+```{r}
+# neighbor-joining
+# required package: ape, ggtree
+xen_tree <- nj(xen_dist)
+
+# root the tree with the outgroup
+xen_tree_1 <- root(xen_tree, outgroup = "Orycteropus_afer")
+
+
+# Color and name the clades
+xen_tree_2 <- groupClade(xen_tree_1, .node = c(33, 29, 32))
+
+# plot the tree
+xen_tree_3 <- ggtree(xen_tree_2, aes(color=group)) + 
+  ggtitle("Xenarthra Phylogeny") +
+  geom_text(aes(label=label), size=3, color='black', hjust=-0.3) +
+  hexpand(.5)
+
+
+xen_tree_3$data
+xen_tree_3
+```
+
+
+```{r}
+new_df <- data.frame(species = xen_tree_3$data$label, group = xen_tree_3$data$group)
+new_df <- new_df[is.na(new_df$species) != TRUE, ]
+new_df
+
+# Add a column with the true clustering results
+seq_df$clade <- "Armadillo" 
+seq_df$clade[seq_df$Species %in% c("Acratocnus_ye",
+                                   "Megatherium_americanum",
+                                   "Bradypus_pygmaeus",
+                                   "Bradypus_torquatus",
+                                   "Bradypus_variegatus", 
+                                   "Choloepus_hoffmanni", 
+                                   "Mylodon_darwinii")] <- "Sloth"
+
+seq_df$clade[seq_df$Species %in% c("Tamandua_tetradactyla", 
+                                 "Tamandua_mexicana",
+                                 "Myrmecophaga_tridactyla", 
+                                 "Cyclopes_didactylus")] <- "Anteater"
+
+seq_df$clade[seq_df$Species %in% c("Orycteropus_afer")] <- "Aardvark (outgroup)"
+
+seq_df
+new_df
+```
+
+```{r}
+
+# For each group in the phylogeny, assign the corresponding clade
+new_df$clade <- "Armadillo" 
+new_df$clade[new_df$group %in% 3] <- "Anteaters"
+
+new_df$clade[new_df$group %in% 2] <- "Sloth"
+
+new_df$clade[new_df$group %in% 0] <- "Aardvark (outgroup)"
+
+# make an empty list
+my_list <- list()
+
+# for each species in the true results dataframe, check if there is a matching species that is apart of the same clade in the phylogeny dataframe. If there is, append it to the list.
+for(i in 1:length(seq_df$Species)){
+  if(new_df$species[i] == seq_df$Species[i]) 
+    if(new_df$clade[i] == seq_df$clade[i])
+      my_list <- append(seq_df$Species, my_list)
+}
+
+# check the length of the list to see how many correct classifications there are 
+length(my_list)
+```
+
+There are 0 misclassifications and a 0% error rate. 
+
+
+
+```{r}
+# to determine what s value to use, lets average the sequence length of all our samples
+len_list <- list()
+
+for (i in 1:24){
+  len_list <- append(length(seq_list[[i]]), len_list)
+}
+
+
+sum(unlist(len_list))/242
+
+# use s = 1644
+```
+
+```{r}
+# strict clock model
+#ctrl <- chronos.control(nb.rate.cat = 1)
+#chr.clock <- chronos(xen_tree_2, model = "discrete", control = ctrl)
+
+# branch lengths are in number of substitutions/site
+
+# sample times based on distance from root to tip:
+sts <- setNames(ape::node.depth.edgelength(xen_tree_1)[1:ape::Ntip(xen_tree_1)], xen_tree_1$tip.label)
+
+#sts_1 <- setNames(c(NA, NA, NA, NA, NA, 2005-01-01, 2000-11-01, 2007-01-01, 2000-11-01, 1976-09-13, NA, 1966-01-28, 1988-01-01, 1978-12-09, 1997-11-01, 2001-04-17, NA, NA, NA, 1978-08-06, NA, NA, NA, NA), xen_tree_1$tip.label)
+
+sts
+# modify edge length to represent evolutionary distance with rate 1e-3:
+xen_tree_1$edge.length <- xen_tree_1$edge.length * 1e-3
+
+# treedater: 
+td <- dater(xen_tree_1, sts =sts , s = 1644, clock='strict', omega0=.0015)
+
+td
+```
+
